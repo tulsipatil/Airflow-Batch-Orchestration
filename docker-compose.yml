@@ -1,0 +1,209 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+      TZ: UTC
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - airflow-network
+
+  # Redis for Celery (task queue)
+  redis:
+    image: redis:7-alpine
+    container_name: airflow-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - airflow-network
+
+  # Airflow Database Initialization
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airflow-init
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__PLUGINS_FOLDER: /opt/airflow/plugins
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: d60OM4ZycYtzQQYsmayo3btiMMcJRnz82_DddiYnDc=
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./airflow/logs:/opt/airflow/logs
+      - ./src:/opt/airflow/src
+    command: bash -c "airflow db init && airflow users create --username airflow --password airflow --firstname Air --lastname Flow --role Admin --email airflow@example.com 2>/dev/null || true"
+    networks:
+      - airflow-network
+
+  # Airflow Web UI
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airflow-webserver
+    env_file: .env
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__PLUGINS_FOLDER: /opt/airflow/plugins
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: d60OM4ZycYtzQQYsmayo3btiMMcJRnz82_DddiYnDc=
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'True'
+      AIRFLOW__SMTP__SMTP_HOST: ${SMTP_HOST:-localhost}
+      AIRFLOW__SMTP__SMTP_PORT: ${SMTP_PORT:-1025}
+      AIRFLOW__SMTP__SMTP_USER: ${SMTP_USER:-}
+      AIRFLOW__SMTP__SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      AIRFLOW__SMTP__SMTP_FROM_EMAIL: ${AIRFLOW_FROM_EMAIL:-airflow@example.com}
+      AIRFLOW__CORE__DEFAULT_VIEW: tree
+      AIRFLOW__CORE__MIN_LOG_LEVEL: INFO
+      # Additional settings
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./airflow/logs:/opt/airflow/logs
+      - ./src:/opt/airflow/src
+    command: webserver
+    networks:
+      - airflow-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Airflow Scheduler
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airflow-scheduler
+    env_file: .env
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__PLUGINS_FOLDER: /opt/airflow/plugins
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: d60OM4ZycYtzQQYsmayo3btiMMcJRnz82_DddiYnDc=
+      AIRFLOW__SMTP__SMTP_HOST: ${SMTP_HOST:-localhost}
+      AIRFLOW__SMTP__SMTP_PORT: ${SMTP_PORT:-1025}
+      AIRFLOW__SMTP__SMTP_USER: ${SMTP_USER:-}
+      AIRFLOW__SMTP__SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      AIRFLOW__SMTP__SMTP_FROM_EMAIL: ${AIRFLOW_FROM_EMAIL:-airflow@example.com}
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./airflow/logs:/opt/airflow/logs
+      - ./src:/opt/airflow/src
+    command: scheduler
+    networks:
+      - airflow-network
+
+  # Airflow Celery Worker
+  airflow-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: airflow-worker
+    env_file: .env
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__PLUGINS_FOLDER: /opt/airflow/plugins
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: d60OM4ZycYtzQQYsmayo3btiMMcJRnz82_DddiYnDc=
+      AIRFLOW__SMTP__SMTP_HOST: ${SMTP_HOST:-localhost}
+      AIRFLOW__SMTP__SMTP_PORT: ${SMTP_PORT:-1025}
+      AIRFLOW__SMTP__SMTP_USER: ${SMTP_USER:-}
+      AIRFLOW__SMTP__SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      AIRFLOW__SMTP__SMTP_FROM_EMAIL: ${AIRFLOW_FROM_EMAIL:-airflow@example.com}
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./airflow/logs:/opt/airflow/logs
+      - ./src:/opt/airflow/src
+    command: celery worker --loglevel=info
+    networks:
+      - airflow-network
+
+  # dbt container for transformations
+  dbt:
+    build:
+      context: ./dbt
+      dockerfile: Dockerfile
+    container_name: airflow-dbt
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DBT_PROFILES_DIR: /dbt
+      DBT_PROJECT_DIR: /dbt
+    volumes:
+      - ./dbt:/dbt
+    working_dir: /dbt
+    networks:
+      - airflow-network
+    command: ["dbt", "version"]
+
+volumes:
+  postgres_data:
+
+networks:
+  airflow-network:
+    driver: bridge

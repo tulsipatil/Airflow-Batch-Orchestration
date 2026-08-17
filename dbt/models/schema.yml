@@ -1,0 +1,110 @@
+version: 2
+
+sources:
+  - name: raw_data
+    description: Raw data layer from API ingestion
+    database: airflow
+    schema: raw_data
+    tables:
+      - name: raw_stock_data
+        description: Raw stock price data ingested from external APIs
+        columns:
+          - name: raw_stock_data_id
+            description: Unique identifier for raw record
+            tests:
+              - unique
+              - not_null
+          - name: stock_symbol
+            description: Stock ticker symbol (e.g., AAPL, GOOGL)
+            tests:
+              - not_null
+          - name: trade_date
+            description: Date of the stock price
+            tests:
+              - not_null
+          - name: open_price
+            description: Opening price for the day
+          - name: close_price
+            description: Closing price for the day
+          - name: high_price
+            description: Highest price during the day
+          - name: low_price
+            description: Lowest price during the day
+          - name: volume
+            description: Trading volume
+
+  - name: analytics
+    description: Analytics/dimension tables
+    database: airflow
+    schema: analytics
+    tables:
+      - name: dim_stock
+        description: Stock symbol dimension table
+        columns:
+          - name: stock_id
+            description: Unique stock identifier
+            tests:
+              - unique
+              - not_null
+          - name: stock_symbol
+            description: Stock ticker symbol
+            tests:
+              - unique
+              - not_null
+      - name: dim_date
+        description: Date dimension table
+        columns:
+          - name: date_id
+            description: Unique date identifier
+            tests:
+              - unique
+              - not_null
+          - name: calendar_date
+            description: Calendar date
+            tests:
+              - unique
+              - not_null
+
+models:
+  - name: stg_stock_data
+    description: Staging view with cleaned and transformed stock data
+    columns:
+      - name: raw_stock_data_id
+        description: Reference to raw data
+        tests:
+          - not_null
+      - name: stock_symbol
+        description: Stock ticker symbol
+        tests:
+          - not_null
+      - name: daily_change
+        description: Price change from open to close
+      - name: data_quality_flag
+        description: Data quality assessment
+        tests:
+          - accepted_values:
+              values: ['VALID', 'HIGH_LOW_INVALID', 'CLOSE_OUT_OF_RANGE', 'NEGATIVE_VOLUME', 'NEGATIVE_PRICE']
+
+  - name: fct_stock_price
+    description: Fact table for stock prices
+    columns:
+      - name: stock_id
+        description: Foreign key to stock dimension
+        tests:
+          - not_null
+          - relationships:
+              to: source('analytics', 'dim_stock')
+              field: stock_id
+      - name: date_id
+        description: Foreign key to date dimension
+        tests:
+          - not_null
+          - relationships:
+              to: source('analytics', 'dim_date')
+              field: date_id
+      - name: close_price
+        description: Stock closing price
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric

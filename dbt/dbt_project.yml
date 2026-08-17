@@ -1,0 +1,58 @@
+
+# Name your project! Project names should be lowercase and use underscores as spaces.
+name: 'stock_analytics'
+version: '1.0.0'
+config-version: 2
+
+# This sets the `raw-paths` config
+# raw-paths: ["data"]
+
+# This sets the `source-paths` config
+# source-paths: ["models"]
+
+# You can define models and tests here
+# using the `{{ config(...) }}` macro
+
+profile: 'stock_analytics'
+
+model-paths: ["models"]
+analysis-paths: ["analysis"]
+test-paths: ["tests"]
+data-paths: ["data"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"  # directory which will store compiled SQL files
+clean-targets:         # directories to be removed by `dbt clean`
+  - "target"
+  - "dbt_modules"
+  - "dbt_packages"
+
+# Configuring models
+models:
+  stock_analytics:
+    staging:
+      materialized: view
+      schema: staging
+    mart:
+      materialized: table
+
+# Test configurations
+tests:
+  stock_analytics:
+    enabled: true
+    store_failures: true
+
+# Seeds configuration
+seeds:
+  stock_analytics:
+    schema: analytics
+    tags: ["seed"]
+
+# Global configs
+vars:
+  # These variables are used in dbt models and tests
+  start_date: '2024-01-01'
+  pipeline_name: 'stock_data_pipeline'
+  alert_email: '{{ env_var("AIRFLOW_TO_EMAIL") }}'
+  
